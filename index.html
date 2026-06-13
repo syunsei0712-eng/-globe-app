@@ -563,13 +563,13 @@
         const mesh = new THREE.Mesh(
           new THREE.SphereGeometry(R, 64, 64),
           new THREE.MeshPhongMaterial({
-            map: earthMat.map, transparent: true, opacity: 0.42, depthWrite: false,
+            map: earthMat.map, transparent: true, opacity: 0.28, depthWrite: false,
           })
         );
         arGlobe.add(mesh);
 
         // every national border drawn on the see-through globe
-        if (WORLD) arGlobe.add(buildBorders(WORLD, R * 1.004, 0x7dd3fc, 0.5));
+        if (WORLD) arGlobe.add(buildBorders(WORLD, R * 1.004, 0x67e8f9, 0.95));
 
         // holder for the live "country you are pointing at" highlight
         arHighlight = new THREE.Group();
@@ -720,7 +720,20 @@
       }
 
       async function enter() {
-        // 1) camera permission must come from this user gesture
+        // 1) iOS 13+: the motion/orientation permission request MUST happen
+        //    synchronously inside the tap, BEFORE any await — otherwise the
+        //    user-gesture is lost and the sensor never starts. So call it first.
+        let orientReq = null;
+        if (typeof DeviceOrientationEvent !== 'undefined' &&
+            typeof DeviceOrientationEvent.requestPermission === 'function') {
+          try { orientReq = DeviceOrientationEvent.requestPermission(); } catch (_) {}
+        }
+        let orientGranted = true;
+        if (orientReq) {
+          try { orientGranted = (await orientReq) === 'granted'; } catch (_) { orientGranted = false; }
+        }
+
+        // 2) camera
         try {
           stream = await navigator.mediaDevices.getUserMedia({
             video: { facingMode: { ideal: 'environment' } }, audio: false,
@@ -731,14 +744,9 @@
           return;
         }
 
-        // 2) iOS 13+ needs explicit permission for motion/orientation
-        try {
-          if (typeof DeviceOrientationEvent !== 'undefined' &&
-              typeof DeviceOrientationEvent.requestPermission === 'function') {
-            const res = await DeviceOrientationEvent.requestPermission();
-            if (res !== 'granted') showError('方位センサーが許可されませんでした。映像は出ますが向きの連動はしません。');
-          }
-        } catch (_) {}
+        if (!orientGranted) {
+          showError('方位センサーが許可されませんでした。iPhoneは「設定 → Safari → モーションとセンサーへのアクセス」をオンにして再読み込みしてください。');
+        }
         // Prefer an absolute (north-referenced) orientation source when available.
         orientEvent = ('ondeviceorientationabsolute' in window) ? 'deviceorientationabsolute' : 'deviceorientation';
         window.addEventListener(orientEvent, onOrient, true);
