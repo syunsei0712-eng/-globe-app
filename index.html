@@ -177,6 +177,7 @@
     <div class="toggle-row">
       <div class="btn active" id="toggle-clouds">☁️ 雲</div>
       <div class="btn active" id="toggle-stars">✨ 星空</div>
+      <div class="btn" id="toggle-borders">🗺️ 国境</div>
       <div class="btn" id="reset">↺ 視点リセット</div>
     </div>
 
@@ -341,6 +342,99 @@
       controls.target.set(0, 0, 0);
     });
 
+    // --- Country borders (shared by the main globe and AR) ---
+    // Equirectangular lon/lat -> sphere position, matching the earth texture.
+    function lonLatToVec3(lon, lat, r) {
+      const phi = (90 - lat) * Math.PI / 180;
+      const theta = (lon + 180) * Math.PI / 180;
+      return [
+        -r * Math.sin(phi) * Math.cos(theta),
+        r * Math.cos(phi),
+        r * Math.sin(phi) * Math.sin(theta),
+      ];
+    }
+
+    // Build a LineSegments of all national borders at the given radius.
+    function buildBorders(geo, radius, color, opacity) {
+      const verts = [];
+      const pushRing = (ring) => {
+        for (let i = 0; i < ring.length - 1; i++) {
+          const a = lonLatToVec3(ring[i][0], ring[i][1], radius);
+          const b = lonLatToVec3(ring[i + 1][0], ring[i + 1][1], radius);
+          verts.push(a[0], a[1], a[2], b[0], b[1], b[2]);
+        }
+      };
+      for (const f of geo.features) {
+        const polys = f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.coordinates;
+        for (const poly of polys) for (const ring of poly) pushRing(ring);
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+      const m = new THREE.LineBasicMaterial({ color, transparent: true, opacity, depthWrite: false });
+      return new THREE.LineSegments(g, m);
+    }
+
+    // Build borders for a single feature (used to highlight one country).
+    function buildCountryOutline(feature, radius, color) {
+      const verts = [];
+      const polys = feature.geometry.type === 'Polygon' ? [feature.geometry.coordinates] : feature.geometry.coordinates;
+      for (const poly of polys) for (const ring of poly) {
+        for (let i = 0; i < ring.length - 1; i++) {
+          const a = lonLatToVec3(ring[i][0], ring[i][1], radius);
+          const b = lonLatToVec3(ring[i + 1][0], ring[i + 1][1], radius);
+          verts.push(a[0], a[1], a[2], b[0], b[1], b[2]);
+        }
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+      return new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color, depthTest: false, transparent: true }));
+    }
+
+    // Point-in-polygon (ray casting) to find which country a lon/lat is in.
+    function pointInRing(lon, lat, ring) {
+      let inside = false;
+      for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        const xi = ring[i][0], yi = ring[i][1], xj = ring[j][0], yj = ring[j][1];
+        if (((yi > lat) !== (yj > lat)) && (lon < (xj - xi) * (lat - yi) / (yj - yi) + xi)) inside = !inside;
+      }
+      return inside;
+    }
+    function countryAt(geo, lon, lat) {
+      if (!geo) return null;
+      for (const f of geo.features) {
+        const polys = f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.coordinates;
+        for (const poly of polys) {
+          if (pointInRing(lon, lat, poly[0])) {
+            let inHole = false;
+            for (let h = 1; h < poly.length; h++) if (pointInRing(lon, lat, poly[h])) inHole = true;
+            if (!inHole) return f;
+          }
+        }
+      }
+      return null;
+    }
+    const countryLabel = (f) => f ? (f.properties.ja || f.properties.name) : null;
+
+    // Load the world borders, then add them to the main globe.
+    let WORLD = null;
+    let mainBorders = null;
+    fetch('countries.geojson')
+      .then(r => r.json())
+      .then(geo => {
+        WORLD = geo;
+        mainBorders = buildBorders(geo, 2.012, 0x7dd3fc, 0.9);
+        mainBorders.visible = false;
+        earthGroup.add(mainBorders);
+      })
+      .catch(err => console.warn('borders load failed', err));
+
+    const toggleBorders = document.getElementById('toggle-borders');
+    toggleBorders.addEventListener('click', () => {
+      if (!mainBorders) return;
+      mainBorders.visible = !mainBorders.visible;
+      toggleBorders.classList.toggle('active', mainBorders.visible);
+    });
+
     // --- Animation loop ---
     const clock = new THREE.Clock();
     function animate() {
@@ -427,8 +521,9 @@
         ctx.closePath();
       }
 
-      // Build the translucent "see-through" globe placed below the viewer.
-      function buildGlobe(lat, lng, antiLat, antiLng, countryText) {
+      // Build the translucent "see-through" globe placed below the viewer,
+      // with real national borders and the relevant countries highlighted.
+      function buildGlobe(lat, lng, antiLat, antiLng, countryText, hereF, antiF) {
         if (arGlobe) { scene.remove(arGlobe); }
         arGlobe = new THREE.Group();
         const R = 1.6;
@@ -436,18 +531,33 @@
         const mesh = new THREE.Mesh(
           new THREE.SphereGeometry(R, 48, 48),
           new THREE.MeshPhongMaterial({
-            map: earthMat.map, transparent: true, opacity: 0.55, depthWrite: false,
+            map: earthMat.map, transparent: true, opacity: 0.5, depthWrite: false,
           })
         );
         arGlobe.add(mesh);
+
+        // all national borders drawn on the see-through globe
+        if (WORLD) {
+          const b = buildBorders(WORLD, R * 1.004, 0x7dd3fc, 0.7);
+          arGlobe.add(b);
+        }
+        // highlight: current country (green) and antipode country (amber)
+        if (hereF) {
+          const o = buildCountryOutline(hereF, R * 1.012, 0x4ade80);
+          o.renderOrder = 9; arGlobe.add(o);
+        }
+        if (antiF) {
+          const o = buildCountryOutline(antiF, R * 1.012, 0xfbbf24);
+          o.renderOrder = 9; arGlobe.add(o);
+        }
 
         // green pin = where you are now (ends up on top, nearest the viewer)
         const here = makePin(0x4ade80);
         here.position.copy(latLngToVec3(lat, lng, R));
         arGlobe.add(here);
 
-        // red pin = the antipode, on the far side, seen THROUGH the globe
-        const there = makePin(0xf87171);
+        // amber pin = the antipode, on the far side, seen THROUGH the globe
+        const there = makePin(0xfbbf24);
         there.position.copy(latLngToVec3(antiLat, antiLng, R));
         arGlobe.add(there);
 
@@ -561,16 +671,26 @@
           const antiLat = -lat;
           const antiLng = lng > 0 ? lng - 180 : lng + 180;
 
-          buildGlobe(lat, lng, antiLat, antiLng, '…');
-          const [here, there] = await Promise.all([
-            lookupPlace(lat, lng), lookupPlace(antiLat, antiLng),
-          ]);
-          const hereTxt = here || `${lat.toFixed(1)}, ${lng.toFixed(1)}`;
-          const thereTxt = there || `${antiLat.toFixed(1)}, ${antiLng.toFixed(1)}`;
+          // Identify countries from the local borders data (instant, has 日本語 names)
+          const hereF = countryAt(WORLD, lng, lat);
+          const antiF = countryAt(WORLD, antiLng, antiLat);
+
+          // Names: prefer the borders data; fall back to online lookup, then coords
+          let hereTxt = countryLabel(hereF);
+          let thereTxt = countryLabel(antiF);
+          if (!hereTxt || !thereTxt) {
+            const [hOnline, tOnline] = await Promise.all([
+              hereTxt ? null : lookupPlace(lat, lng),
+              thereTxt ? null : lookupPlace(antiLat, antiLng),
+            ]);
+            hereTxt = hereTxt || hOnline || `${lat.toFixed(1)}, ${lng.toFixed(1)}`;
+            thereTxt = thereTxt || tOnline || '🌊 海の上';
+          }
+
           el.top.innerHTML = `📍 現在地: <b>${hereTxt}</b><br>🌏 地球の裏側: <b>${thereTxt}</b>`;
           el.country.textContent = thereTxt;
           el.dist.textContent = '🌍 地球を貫いて約 12,742 km 先';
-          buildGlobe(lat, lng, antiLat, antiLng, thereTxt);
+          buildGlobe(lat, lng, antiLat, antiLng, thereTxt, hereF, antiF);
         }, (err) => {
           showError('位置情報を取得できませんでした（' + err.message + '）。許可を確認してください。');
           el.top.innerHTML = '位置情報が取得できませんでした';
