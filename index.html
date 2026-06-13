@@ -144,10 +144,11 @@
     #ar-reveal .lbl { font-size: 12px; color: #94a3b8; }
     #ar-reveal .dist { font-size: 12px; color: var(--accent); margin-top: 6px; }
 
-    #ar-exit {
+    #ar-cal {
       position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%);
-      pointer-events: auto;
+      display: flex; gap: 10px; pointer-events: auto;
     }
+    #ar-cal .btn { padding: 10px 14px; }
     #ar-error {
       position: absolute; bottom: 80px; left: 50%; transform: translateX(-50%);
       width: calc(100% - 28px); max-width: 420px;
@@ -190,14 +191,18 @@
   <video id="cam" autoplay muted playsinline></video>
   <div id="ar-ui">
     <div id="ar-top">位置情報を取得中…</div>
-    <div id="ar-reticle">📷 足元の地面にカメラを向けてみて</div>
+    <div id="ar-reticle">🧭 スマホを地面や地平線の先に向けてみて</div>
     <div id="ar-reveal">
-      <div class="lbl">🌍 真下、地球の裏側は…</div>
+      <div class="lbl">📡 この方向の先にあるのは…</div>
       <div class="big" id="ar-country">—</div>
       <div class="dist" id="ar-dist"></div>
     </div>
     <div id="ar-error"></div>
-    <div class="btn" id="ar-exit">✕ ARを終了</div>
+    <div id="ar-cal">
+      <div class="btn" id="ar-cal-left">◀ 方位</div>
+      <div class="btn" id="ar-exit">✕ 終了</div>
+      <div class="btn" id="ar-cal-right">方位 ▶</div>
+    </div>
   </div>
 
   <script type="importmap">
@@ -459,6 +464,8 @@
       const el = {
         enter: document.getElementById('enter-ar'),
         exit: document.getElementById('ar-exit'),
+        calLeft: document.getElementById('ar-cal-left'),
+        calRight: document.getElementById('ar-cal-right'),
         video: document.getElementById('cam'),
         top: document.getElementById('ar-top'),
         reticle: document.getElementById('ar-reticle'),
@@ -471,7 +478,14 @@
       let active = false;
       let stream = null;
       let arGlobe = null;
+      let arHighlight = null;        // holder for the live "country in view" outline
+      let arTargetName = null;       // currently highlighted country name
       let orient = null;             // latest {alpha, beta, gamma} in radians
+      let hasCompass = false;        // true once an absolute/compass heading arrives
+      let yawOffset = 0;             // manual azimuth correction (radians)
+      let arFrame = 0;               // throttles the per-frame raycast
+      let orientEvent = 'deviceorientation';
+      const AR_R = 3;                // radius of the AR see-through globe
       const savedCam = new THREE.Vector3();
 
       // lat/lng (degrees) -> position on a sphere of radius r, aligned with
@@ -521,54 +535,56 @@
         ctx.closePath();
       }
 
-      // Build the translucent "see-through" globe placed below the viewer,
-      // with real national borders and the relevant countries highlighted.
-      function buildGlobe(lat, lng, antiLat, antiLng, countryText, hereF, antiF) {
+      // Build the transparent Earth around the viewer, compass + location
+      // aligned so the real-world direction you point at maps to real geography.
+      // You stand on the surface (top of the globe is your location); looking
+      // down toward a compass bearing reveals the country in that direction.
+      function buildGlobe(lat, lng, antiLat, antiLng) {
         if (arGlobe) { scene.remove(arGlobe); }
         arGlobe = new THREE.Group();
-        const R = 1.6;
+        const R = AR_R;
 
         const mesh = new THREE.Mesh(
-          new THREE.SphereGeometry(R, 48, 48),
+          new THREE.SphereGeometry(R, 64, 64),
           new THREE.MeshPhongMaterial({
-            map: earthMat.map, transparent: true, opacity: 0.5, depthWrite: false,
+            map: earthMat.map, transparent: true, opacity: 0.42, depthWrite: false,
           })
         );
         arGlobe.add(mesh);
 
-        // all national borders drawn on the see-through globe
-        if (WORLD) {
-          const b = buildBorders(WORLD, R * 1.004, 0x7dd3fc, 0.7);
-          arGlobe.add(b);
-        }
-        // highlight: current country (green) and antipode country (amber)
-        if (hereF) {
-          const o = buildCountryOutline(hereF, R * 1.012, 0x4ade80);
-          o.renderOrder = 9; arGlobe.add(o);
-        }
-        if (antiF) {
-          const o = buildCountryOutline(antiF, R * 1.012, 0xfbbf24);
-          o.renderOrder = 9; arGlobe.add(o);
-        }
+        // every national border drawn on the see-through globe
+        if (WORLD) arGlobe.add(buildBorders(WORLD, R * 1.004, 0x7dd3fc, 0.5));
 
-        // green pin = where you are now (ends up on top, nearest the viewer)
+        // holder for the live "country you are pointing at" highlight
+        arHighlight = new THREE.Group();
+        arGlobe.add(arHighlight);
+
+        // green pin = you (ends up on top), amber pin = the antipode (bottom)
         const here = makePin(0x4ade80);
         here.position.copy(latLngToVec3(lat, lng, R));
         arGlobe.add(here);
-
-        // amber pin = the antipode, on the far side, seen THROUGH the globe
         const there = makePin(0xfbbf24);
         there.position.copy(latLngToVec3(antiLat, antiLng, R));
         arGlobe.add(there);
 
-        const label = makeLabel(countryText);
-        label.position.copy(latLngToVec3(antiLat, antiLng, R + 0.45));
-        arGlobe.add(label);
-
-        // rotate so your current location points straight up toward the camera
-        const up = latLngToVec3(lat, lng, 1).normalize();
-        arGlobe.quaternion.setFromUnitVectors(up, new THREE.Vector3(0, 1, 0));
-        arGlobe.position.set(0, -3.0, 0);
+        // --- ENU orientation ---
+        // Map the user's location -> +Y (up, toward camera at origin),
+        // geographic North -> -Z (world north), geographic East -> +X.
+        const v = (la, lo) => new THREE.Vector3(...lonLatToVec3(lo, la, 1)).normalize();
+        const U = v(lat, lng);
+        let E = v(lat, lng + 0.5).sub(U);             // toward higher longitude
+        E.sub(U.clone().multiplyScalar(E.dot(U))).normalize(); // orthogonalize vs up
+        let N = v(lat + 0.5, lng).sub(U);             // toward higher latitude
+        N.sub(U.clone().multiplyScalar(N.dot(U)))
+         .sub(E.clone().multiplyScalar(N.dot(E))).normalize();
+        const A = new THREE.Matrix4().makeBasis(E, N, U);   // local axes -> E,N,U
+        const L = new THREE.Matrix4().makeBasis(            // E->+X, N->-Z, U->+Y
+          new THREE.Vector3(1, 0, 0),
+          new THREE.Vector3(0, 0, -1),
+          new THREE.Vector3(0, 1, 0));
+        const M = L.multiply(A.clone().transpose());        // M = L * Aᵀ
+        arGlobe.quaternion.setFromRotationMatrix(M);
+        arGlobe.position.set(0, -R, 0);  // center one radius below -> you stand on top
         arGlobe.visible = true;
         scene.add(arGlobe);
       }
@@ -580,6 +596,10 @@
       const _q1 = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
       const _fwd = new THREE.Vector3();
 
+      const _up = new THREE.Vector3(0, 1, 0);
+      const _qYaw = new THREE.Quaternion();
+      const _F = new THREE.Vector3();
+
       function applyOrientation() {
         if (!orient) return;
         const screenAngle = ((screen.orientation && screen.orientation.angle) || window.orientation || 0) * Math.PI / 180;
@@ -587,22 +607,74 @@
         camera.quaternion.setFromEuler(_euler);
         camera.quaternion.multiply(_q1);
         camera.quaternion.multiply(_q0.setFromAxisAngle(_zee, -screenAngle));
+        // manual azimuth correction (world-up rotation), on top of compass
+        if (yawOffset) camera.quaternion.premultiply(_qYaw.setFromAxisAngle(_up, yawOffset));
+      }
+
+      // Inverse of lonLatToVec3: unit vector -> {lat, lon} in degrees.
+      function vec3ToLonLat(v) {
+        const lat = Math.asin(THREE.MathUtils.clamp(v.y, -1, 1)) * 180 / Math.PI;
+        let lon = Math.atan2(v.z, -v.x) * 180 / Math.PI - 180;
+        if (lon < -180) lon += 360; if (lon > 180) lon -= 360;
+        return { lat, lon };
       }
 
       function update() {
         applyOrientation();
-        if (arGlobe) arGlobe.rotation.y += 0.0; // keep geography stable
-        // Are we looking down toward the ground?
+        if (!arGlobe) return;
+
+        // Where is the camera pointing? Cast a ray from the eye (on the
+        // surface) to the FAR side of the globe = the geography in that direction.
         _fwd.set(0, 0, -1).applyQuaternion(camera.quaternion);
-        const lookingDown = _fwd.y < -0.35;
-        el.reveal.classList.toggle('show', lookingDown);
-        el.reticle.style.opacity = lookingDown ? '0' : '1';
+        const t = -2 * _fwd.y * AR_R; // far hit; origin sits on the sphere
+
+        // throttle the (slightly heavy) country lookup to ~12 Hz
+        if (++arFrame % 5 !== 0) return;
+
+        if (t > 0.02) {
+          _F.copy(_fwd).multiplyScalar(t);     // world point on the far surface
+          arGlobe.worldToLocal(_F).normalize(); // -> globe-local geography
+          const { lat, lon } = vec3ToLonLat(_F);
+          const f = countryAt(WORLD, lon, lat);
+          const name = countryLabel(f) || '🌊 海の上';
+          const ns = lat >= 0 ? 'N' : 'S', ew = lon >= 0 ? 'E' : 'W';
+          el.country.textContent = name;
+          el.dist.textContent = `この方向の地表 · ${Math.abs(lat).toFixed(0)}°${ns} ${Math.abs(lon).toFixed(0)}°${ew}`;
+          el.reveal.classList.add('show');
+          el.reticle.style.opacity = '0';
+          if (name !== arTargetName) {
+            arTargetName = name;
+            while (arHighlight.children.length) arHighlight.remove(arHighlight.children[0]);
+            if (f) {
+              const o = buildCountryOutline(f, AR_R * 1.012, 0xfb7185);
+              o.renderOrder = 12;
+              arHighlight.add(o);
+            }
+          }
+        } else {
+          // looking up / above the horizon -> open sky
+          el.country.textContent = '⬆️ 空';
+          el.dist.textContent = '下や地平線の先に向けてみて';
+          el.reveal.classList.remove('show');
+          el.reticle.style.opacity = '1';
+          if (arTargetName !== null) {
+            arTargetName = null;
+            while (arHighlight.children.length) arHighlight.remove(arHighlight.children[0]);
+          }
+        }
       }
 
       function onOrient(e) {
         if (e.alpha == null) return;
+        let alpha = e.alpha;
+        if (typeof e.webkitCompassHeading === 'number' && !isNaN(e.webkitCompassHeading)) {
+          alpha = 360 - e.webkitCompassHeading; // iOS: convert compass to north-referenced alpha
+          hasCompass = true;
+        } else if (e.absolute === true) {
+          hasCompass = true; // Android absolute: alpha already north-referenced
+        }
         orient = {
-          alpha: THREE.MathUtils.degToRad(e.alpha),
+          alpha: THREE.MathUtils.degToRad(alpha),
           beta: THREE.MathUtils.degToRad(e.beta),
           gamma: THREE.MathUtils.degToRad(e.gamma),
         };
@@ -651,16 +723,19 @@
             if (res !== 'granted') showError('方位センサーが許可されませんでした。映像は出ますが向きの連動はしません。');
           }
         } catch (_) {}
-        window.addEventListener('deviceorientation', onOrient, true);
+        // Prefer an absolute (north-referenced) orientation source when available.
+        orientEvent = ('ondeviceorientationabsolute' in window) ? 'deviceorientationabsolute' : 'deviceorientation';
+        window.addEventListener(orientEvent, onOrient, true);
 
         // 3) enter AR rendering state
         active = true; AR.active = true;
+        hasCompass = false; yawOffset = 0; arTargetName = null; arFrame = 0;
         document.body.classList.add('ar-active');
         el.error.style.display = 'none';
         controls.enabled = false;
         savedCam.copy(camera.position);
         camera.position.set(0, 0, 0);
-        camera.fov = 75; camera.updateProjectionMatrix();
+        camera.fov = 78; camera.updateProjectionMatrix();
         earthGroup.visible = false;
         stars.visible = false;
 
@@ -671,26 +746,17 @@
           const antiLat = -lat;
           const antiLng = lng > 0 ? lng - 180 : lng + 180;
 
-          // Identify countries from the local borders data (instant, has 日本語 names)
+          // Identify current country from the local borders data (日本語 names)
           const hereF = countryAt(WORLD, lng, lat);
-          const antiF = countryAt(WORLD, antiLng, antiLat);
+          let hereTxt = countryLabel(hereF) || await lookupPlace(lat, lng) || `${lat.toFixed(1)}, ${lng.toFixed(1)}`;
 
-          // Names: prefer the borders data; fall back to online lookup, then coords
-          let hereTxt = countryLabel(hereF);
-          let thereTxt = countryLabel(antiF);
-          if (!hereTxt || !thereTxt) {
-            const [hOnline, tOnline] = await Promise.all([
-              hereTxt ? null : lookupPlace(lat, lng),
-              thereTxt ? null : lookupPlace(antiLat, antiLng),
-            ]);
-            hereTxt = hereTxt || hOnline || `${lat.toFixed(1)}, ${lng.toFixed(1)}`;
-            thereTxt = thereTxt || tOnline || '🌊 海の上';
-          }
-
-          el.top.innerHTML = `📍 現在地: <b>${hereTxt}</b><br>🌏 地球の裏側: <b>${thereTxt}</b>`;
-          el.country.textContent = thereTxt;
-          el.dist.textContent = '🌍 地球を貫いて約 12,742 km 先';
-          buildGlobe(lat, lng, antiLat, antiLng, thereTxt, hereF, antiF);
+          const compassNote = hasCompass
+            ? 'スマホを向けた方向の先の国がリアルタイムで分かります'
+            : '⚠️方位センサー未対応のため向きはおおよそです（◀▶で微調整）';
+          el.top.innerHTML = `📍 現在地: <b>${hereTxt}</b><br><span style="font-size:11px;color:#94a3b8">${compassNote}</span>`;
+          el.country.textContent = '…';
+          el.dist.textContent = '';
+          buildGlobe(lat, lng, antiLat, antiLng);
         }, (err) => {
           showError('位置情報を取得できませんでした（' + err.message + '）。許可を確認してください。');
           el.top.innerHTML = '位置情報が取得できませんでした';
@@ -700,10 +766,11 @@
       function exit() {
         active = false; AR.active = false;
         document.body.classList.remove('ar-active');
-        window.removeEventListener('deviceorientation', onOrient, true);
+        window.removeEventListener(orientEvent, onOrient, true);
         if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
         el.video.srcObject = null;
-        if (arGlobe) { scene.remove(arGlobe); arGlobe = null; }
+        if (arGlobe) { scene.remove(arGlobe); arGlobe = null; arHighlight = null; }
+        arTargetName = null;
         el.reveal.classList.remove('show');
         // restore normal globe view
         controls.enabled = true;
@@ -717,6 +784,9 @@
 
       el.enter.addEventListener('click', enter);
       el.exit.addEventListener('click', exit);
+      // nudge the azimuth by 8° to correct any compass offset
+      el.calLeft.addEventListener('click', () => { yawOffset += 8 * Math.PI / 180; });
+      el.calRight.addEventListener('click', () => { yawOffset -= 8 * Math.PI / 180; });
 
       return { get active() { return active; }, set active(v) { active = v; }, update };
     })();
