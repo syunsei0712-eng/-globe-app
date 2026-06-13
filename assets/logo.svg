@@ -1,0 +1,103 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- deep space -->
+    <radialGradient id="space" cx="50%" cy="34%" r="80%">
+      <stop offset="0%" stop-color="#16294a"/>
+      <stop offset="48%" stop-color="#0a1830"/>
+      <stop offset="100%" stop-color="#03070f"/>
+    </radialGradient>
+    <!-- ocean, lit from upper-left -->
+    <radialGradient id="ocean" cx="36%" cy="32%" r="82%">
+      <stop offset="0%" stop-color="#4cb3f0"/>
+      <stop offset="40%" stop-color="#247bcf"/>
+      <stop offset="74%" stop-color="#114a93"/>
+      <stop offset="100%" stop-color="#06224b"/>
+    </radialGradient>
+    <!-- land -->
+    <linearGradient id="land" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#5fbf6a"/>
+      <stop offset="60%" stop-color="#3a9d57"/>
+      <stop offset="100%" stop-color="#2f7d4a"/>
+    </linearGradient>
+    <!-- night-side shadow (terminator) -->
+    <radialGradient id="night" cx="34%" cy="30%" r="86%">
+      <stop offset="0%" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="62%" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#000613" stop-opacity="0.72"/>
+    </radialGradient>
+    <!-- specular top highlight -->
+    <radialGradient id="spec" cx="34%" cy="26%" r="34%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.5"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <!-- atmosphere ring -->
+    <radialGradient id="atmo" cx="50%" cy="50%" r="50%">
+      <stop offset="78%" stop-color="#38bdf8" stop-opacity="0"/>
+      <stop offset="90%" stop-color="#38bdf8" stop-opacity="0.6"/>
+      <stop offset="96%" stop-color="#7dd3fc" stop-opacity="0.28"/>
+      <stop offset="100%" stop-color="#7dd3fc" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="globe"><circle cx="512" cy="512" r="330"/></clipPath>
+  </defs>
+
+  <!-- full opaque square (iOS masks the corners) -->
+  <rect width="1024" height="1024" fill="url(#space)"/>
+
+  <!-- stars -->
+  <g fill="#ffffff">
+    <circle cx="150" cy="180" r="4" opacity="0.9"/>
+    <circle cx="232" cy="300" r="2.4" opacity="0.55"/>
+    <circle cx="864" cy="214" r="3.6" opacity="0.85"/>
+    <circle cx="792" cy="138" r="2" opacity="0.5"/>
+    <circle cx="892" cy="404" r="2.6" opacity="0.7"/>
+    <circle cx="138" cy="628" r="3" opacity="0.7"/>
+    <circle cx="196" cy="852" r="2.6" opacity="0.6"/>
+    <circle cx="858" cy="838" r="4" opacity="0.85"/>
+    <circle cx="912" cy="650" r="2" opacity="0.5"/>
+    <circle cx="110" cy="452" r="2" opacity="0.5"/>
+    <circle cx="690" cy="96" r="2.4" opacity="0.6"/>
+    <circle cx="958" cy="540" r="2.2" opacity="0.55"/>
+  </g>
+
+  <!-- atmosphere glow -->
+  <circle cx="512" cy="512" r="372" fill="url(#atmo)"/>
+
+  <!-- ocean -->
+  <circle cx="512" cy="512" r="330" fill="url(#ocean)"/>
+
+  <!-- continents (stylized Asia–Pacific facing view) -->
+  <g clip-path="url(#globe)" fill="url(#land)">
+    <!-- Eurasia / NE Asia upper-left -->
+    <path d="M250 268
+             q70 -34 150 -14 q66 14 96 -2 q40 -20 84 6 q26 26 -8 58
+             q-44 36 -110 32 q-40 36 -104 30 q-58 -4 -96 -36
+             q-44 -40 -52 -64 q-6 -22 16 -34z"/>
+    <!-- SE Asia / islands center-left -->
+    <path d="M338 470 q44 -16 78 12 q34 30 18 66 q-22 44 -70 44
+             q-44 0 -58 -42 q-12 -50 32 -80z"/>
+    <!-- small island dots -->
+    <circle cx="452" cy="556" r="16"/>
+    <circle cx="486" cy="600" r="11"/>
+    <circle cx="420" cy="612" r="9"/>
+    <!-- Australia lower-center -->
+    <path d="M520 612 q70 -24 124 18 q40 34 12 84 q-36 50 -104 44
+             q-58 -8 -78 -58 q-16 -56 46 -88z"/>
+    <!-- NE landmass right edge -->
+    <path d="M712 360 q44 -12 66 22 q14 34 -16 56 q-34 22 -62 -2
+             q-22 -24 -8 -52 q8 -16 20 -24z"/>
+  </g>
+
+  <!-- cloud wisps -->
+  <g clip-path="url(#globe)" fill="#ffffff" opacity="0.16">
+    <ellipse cx="430" cy="392" rx="150" ry="34" transform="rotate(-18 430 392)"/>
+    <ellipse cx="600" cy="520" rx="170" ry="40" transform="rotate(10 600 520)"/>
+    <ellipse cx="470" cy="690" rx="130" ry="30" transform="rotate(-8 470 690)"/>
+  </g>
+
+  <!-- night shadow + highlight -->
+  <circle cx="512" cy="512" r="330" fill="url(#night)" clip-path="url(#globe)"/>
+  <circle cx="512" cy="512" r="330" fill="url(#spec)" clip-path="url(#globe)"/>
+
+  <!-- crisp atmosphere rim -->
+  <circle cx="512" cy="512" r="329" fill="none" stroke="#bae6fd" stroke-opacity="0.5" stroke-width="3"/>
+</svg>
