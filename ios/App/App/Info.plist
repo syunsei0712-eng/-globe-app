@@ -12,6 +12,8 @@
 	<string>ARで地球の裏側を見るために、背面カメラの映像を使用します。</string>
 	<key>NSMotionUsageDescription</key>
 	<string>端末の向きに合わせて地球儀を表示するために、モーションセンサーを使用します。</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>現在地の真裏（対蹠点）にある地域を表示するために、位置情報を使用します。</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
