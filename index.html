@@ -231,15 +231,14 @@
   <script type="importmap">
   {
     "imports": {
-      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      "three": "./vendor/three.module.js"
     }
   }
   </script>
 
   <script type="module">
     import * as THREE from 'three';
-    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { OrbitControls } from './vendor/OrbitControls.js';
 
     const app = document.getElementById('app');
     const loading = document.getElementById('loading');
@@ -264,7 +263,7 @@
     // --- Texture loader ---
     const loader = new THREE.TextureLoader();
     loader.crossOrigin = 'anonymous';
-    const TEX = 'https://unpkg.com/three-globe@2.31.0/example/img/';
+    const TEX = './textures/';
 
     const earthGroup = new THREE.Group();
     scene.add(earthGroup);

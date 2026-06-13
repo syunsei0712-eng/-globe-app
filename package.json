@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "build": "cp index.html countries.geojson www/",
+    "build": "rm -rf www && mkdir -p www && cp index.html countries.geojson www/ && cp -R vendor textures www/",
     "sync:ios": "npm run build && npx cap sync ios",
     "open:ios": "npx cap open ios",
     "test": "echo \"Error: no test specified\" && exit 1"
