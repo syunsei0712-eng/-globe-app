@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>地球儀アプリ</title>
+  <style>
+    :root {
+      --panel-bg: rgba(15, 23, 42, 0.75);
+      --accent: #38bdf8;
+      --text: #e2e8f0;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
+      color: var(--text);
+    }
+    #app { position: fixed; inset: 0; }
+    canvas { display: block; }
+
+    .panel {
+      position: fixed;
+      top: 16px;
+      left: 16px;
+      padding: 16px 18px;
+      background: var(--panel-bg);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      border-radius: 14px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+      max-width: 260px;
+      user-select: none;
+    }
+    .panel h1 {
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 4px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .panel h1 .dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 12px var(--accent);
+    }
+    .panel p.sub { font-size: 12px; color: #94a3b8; margin-bottom: 14px; }
+
+    .row { display: flex; align-items: center; justify-content: space-between; margin: 10px 0; font-size: 13px; }
+    .row label { color: #cbd5e1; }
+
+    input[type="range"] {
+      -webkit-appearance: none; appearance: none;
+      width: 120px; height: 4px; border-radius: 4px;
+      background: rgba(148, 163, 184, 0.3); outline: none;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none; appearance: none;
+      width: 14px; height: 14px; border-radius: 50%;
+      background: var(--accent); cursor: pointer;
+      box-shadow: 0 0 8px var(--accent);
+    }
+
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: 6px 12px; border-radius: 8px; cursor: pointer;
+      background: rgba(56, 189, 248, 0.15);
+      border: 1px solid rgba(56, 189, 248, 0.4);
+      color: var(--accent); font-size: 12px; font-weight: 600;
+      transition: background 0.15s;
+    }
+    .btn:hover { background: rgba(56, 189, 248, 0.3); }
+    .btn.active { background: var(--accent); color: #0f172a; }
+
+    .toggle-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+
+    .hint {
+      position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+      font-size: 12px; color: #64748b; background: rgba(15, 23, 42, 0.6);
+      padding: 6px 14px; border-radius: 20px; backdrop-filter: blur(8px);
+      user-select: none;
+    }
+    .loading {
+      position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+      flex-direction: column; gap: 12px; background: #000; z-index: 10;
+      transition: opacity 0.6s; font-size: 14px; color: #94a3b8;
+    }
+    .loading.hidden { opacity: 0; pointer-events: none; }
+    .spinner {
+      width: 36px; height: 36px; border: 3px solid rgba(56, 189, 248, 0.2);
+      border-top-color: var(--accent); border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <div class="loading" id="loading">
+    <div class="spinner"></div>
+    <div>地球儀を読み込み中…</div>
+  </div>
+
+  <div class="panel">
+    <h1><span class="dot"></span>地球儀アプリ</h1>
+    <p class="sub">ドラッグで回転・ホイールでズーム</p>
+
+    <div class="row">
+      <label>自動回転</label>
+      <input type="range" id="speed" min="0" max="100" value="20" />
+    </div>
+
+    <div class="toggle-row">
+      <div class="btn active" id="toggle-clouds">☁️ 雲</div>
+      <div class="btn active" id="toggle-stars">✨ 星空</div>
+      <div class="btn" id="reset">↺ 視点リセット</div>
+    </div>
+  </div>
+
+  <div class="hint">マウスドラッグで回転 · スクロールでズーム</div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    const app = document.getElementById('app');
+    const loading = document.getElementById('loading');
+
+    // --- Scene setup ---
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(0, 0, 7);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    app.appendChild(renderer.domElement);
+
+    // --- Lighting ---
+    const sunLight = new THREE.DirectionalLight(0xffffff, 1.6);
+    sunLight.position.set(5, 3, 5);
+    scene.add(sunLight);
+    scene.add(new THREE.AmbientLight(0x334155, 1.2));
+
+    // --- Texture loader ---
+    const loader = new THREE.TextureLoader();
+    loader.crossOrigin = 'anonymous';
+    const TEX = 'https://unpkg.com/three-globe@2.31.0/example/img/';
+
+    const earthGroup = new THREE.Group();
+    scene.add(earthGroup);
+
+    // Earth sphere
+    const earthGeo = new THREE.SphereGeometry(2, 64, 64);
+    const earthMat = new THREE.MeshPhongMaterial({
+      map: loader.load(TEX + 'earth-blue-marble.jpg', () => loading.classList.add('hidden')),
+      bumpMap: loader.load(TEX + 'earth-topology.png'),
+      bumpScale: 0.04,
+      specularMap: loader.load(TEX + 'earth-water.png'),
+      specular: new THREE.Color(0x334155),
+      shininess: 12,
+    });
+    const earth = new THREE.Mesh(earthGeo, earthMat);
+    earthGroup.add(earth);
+
+    // Clouds
+    const cloudGeo = new THREE.SphereGeometry(2.03, 64, 64);
+    const cloudMat = new THREE.MeshPhongMaterial({
+      map: loader.load(TEX + 'earth-clouds.png'),
+      transparent: true,
+      opacity: 0.4,
+      depthWrite: false,
+    });
+    const clouds = new THREE.Mesh(cloudGeo, cloudMat);
+    earthGroup.add(clouds);
+
+    // Atmosphere glow
+    const atmGeo = new THREE.SphereGeometry(2.15, 64, 64);
+    const atmMat = new THREE.ShaderMaterial({
+      transparent: true,
+      side: THREE.BackSide,
+      uniforms: { glowColor: { value: new THREE.Color(0x38bdf8) } },
+      vertexShader: `
+        varying vec3 vNormal;
+        void main() {
+          vNormal = normalize(normalMatrix * normal);
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }`,
+      fragmentShader: `
+        varying vec3 vNormal;
+        uniform vec3 glowColor;
+        void main() {
+          float intensity = pow(0.62 - dot(vNormal, vec3(0.0, 0.0, 1.0)), 3.0);
+          gl_FragColor = vec4(glowColor, 1.0) * intensity;
+        }`,
+    });
+    const atmosphere = new THREE.Mesh(atmGeo, atmMat);
+    earthGroup.add(atmosphere);
+
+    // Tilt the earth axis
+    earthGroup.rotation.z = THREE.MathUtils.degToRad(23.5);
+
+    // --- Starfield ---
+    function makeStars() {
+      const count = 4000;
+      const positions = new Float32Array(count * 3);
+      for (let i = 0; i < count; i++) {
+        const r = 90 + Math.random() * 60;
+        const theta = Math.random() * Math.PI * 2;
+        const phi = Math.acos(2 * Math.random() - 1);
+        positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+        positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
+        positions[i * 3 + 2] = r * Math.cos(phi);
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      const mat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.7, sizeAttenuation: true });
+      return new THREE.Points(geo, mat);
+    }
+    const stars = makeStars();
+    scene.add(stars);
+
+    // --- Controls ---
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.rotateSpeed = 0.5;
+    controls.minDistance = 3;
+    controls.maxDistance = 20;
+    controls.enablePan = false;
+
+    // --- UI ---
+    let autoSpeed = 0.2;
+    const speedSlider = document.getElementById('speed');
+    speedSlider.addEventListener('input', e => { autoSpeed = e.target.value / 100; });
+
+    const toggleClouds = document.getElementById('toggle-clouds');
+    toggleClouds.addEventListener('click', () => {
+      clouds.visible = !clouds.visible;
+      toggleClouds.classList.toggle('active', clouds.visible);
+    });
+
+    const toggleStars = document.getElementById('toggle-stars');
+    toggleStars.addEventListener('click', () => {
+      stars.visible = !stars.visible;
+      toggleStars.classList.toggle('active', stars.visible);
+    });
+
+    document.getElementById('reset').addEventListener('click', () => {
+      camera.position.set(0, 0, 7);
+      controls.target.set(0, 0, 0);
+    });
+
+    // --- Animation loop ---
+    const clock = new THREE.Clock();
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = clock.getDelta();
+      earthGroup.rotation.y += autoSpeed * dt;
+      clouds.rotation.y += autoSpeed * dt * 0.15;
+      stars.rotation.y += 0.005 * dt;
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    // --- Resize ---
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // Fallback: hide loader after 6s even if texture is slow
+    setTimeout(() => loading.classList.add('hidden'), 6000);
+  </script>
+</body>
+</html>
