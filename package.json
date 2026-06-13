@@ -1,0 +1,29 @@
+{
+  "name": "-globe-app",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "build": "cp index.html countries.geojson www/",
+    "sync:ios": "npm run build && npx cap sync ios",
+    "open:ios": "npx cap open ios",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/syunsei0712-eng/-globe-app.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/syunsei0712-eng/-globe-app/issues"
+  },
+  "homepage": "https://github.com/syunsei0712-eng/-globe-app#readme",
+  "dependencies": {
+    "@capacitor/cli": "^8.4.0",
+    "@capacitor/core": "^8.4.0",
+    "@capacitor/ios": "^8.4.0"
+  }
+}

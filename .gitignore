@@ -1,0 +1,11 @@
+node_modules/
+
+# Capacitor / iOS build artifacts
+ios/App/App/public/
+ios/App/Pods/
+ios/App/build/
+ios/App/DerivedData/
+ios/.build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
